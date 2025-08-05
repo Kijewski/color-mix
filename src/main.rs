@@ -2,14 +2,19 @@ use std::num::NonZeroU8;
 use std::rc::Rc;
 
 use float_ord::FloatOrd;
+use palette::cam16::{
+    Cam16FromUnclamped, Cam16IntoUnclamped, Cam16Jch, Cam16Jmh, Cam16Jsh, Cam16Qch, Cam16Qmh,
+    Cam16Qsh, Parameters, StaticWp,
+};
 use palette::color_difference::Wcag21RelativeContrast;
+use palette::white_point::D65;
 use palette::{
-    Hsl, Hsluv, Hsv, Hwb, IntoColor, Lab, Lch, Lchuv, LinSrgb, Luv, Mix, Okhsl, Okhsv, Okhwb,
-    Oklab, Oklch, Srgb, Xyz, Yxy,
+    FromColor, Hsl, Hsluv, Hsv, Hwb, IntoColor, Lab, Lch, Lchuv, LinSrgb, Luv, Mix, Okhsl, Okhsv,
+    Okhwb, Oklab, Oklch, Srgb, Xyz, Yxy,
 };
 use wasm_bindgen::{JsCast, UnwrapThrowExt};
 use web_sys::HtmlInputElement;
-use yew::{function_component, html, use_state, Callback, Html, InputEvent, UseStateHandle};
+use yew::{Callback, Html, InputEvent, UseStateHandle, function_component, html, use_state};
 
 fn main() {
     yew::Renderer::<App>::new().render();
@@ -62,164 +67,124 @@ fn App() -> Html {
     let mix = if let (Some(start), Some(end), Some(steps)) = (v_start, v_end, v_steps) {
         let start: Srgb = start.into_format();
         let end: Srgb = end.into_format();
-        let factor = 1.0 / (steps.get() - 1).max(1) as f32;
-
-        macro_rules! li {
-            ($ty:ty, $text:expr) => {{
-                (0..steps.get()).map(|idx| {
-                    let start: $ty = start.into_color();
-                    let end = end.into_color();
-                    let value = start.mix(end, factor * idx as f32);
-                    let value: Srgb = value.into_color();
-
-                    let text_color = TEXT_COLORS
-                        .iter()
-                        .copied()
-                        .max_by_key(|c| FloatOrd(c.relative_contrast(value)))
-                        .unwrap_or_default();
-                    let text_color: Srgb = text_color.into_color();
-                    let text_color: Srgb<u8> = text_color.into_format();
-                    let (tr, tg, tb) = text_color.into_components();
-
-                    let background: Srgb<u8> = value.into_format();
-                    let (br, bg, bb) = background.into_components();
-                    let css = format!("#{br:02x}{bg:02x}{bb:02x}");
-
-                    let style = format!(
-                        "\
-                        background-color: {css};\
-                        color: #{tr:02x}{tg:02x}{tb:02x};\
-                        display: inline-block;\
-                        height: 1.2lh;\
-                        width: 8em;\
-                        text-align: center;\
-                        font-weight: bold;"
-                    );
-                    let text = &css; // $text(value, &css);
-
-                    html! {
-                        <li>
-                            <span {style}><tt>{text}</tt></span>
-                        </li>
-                    }
-                })
-            }};
-        }
-
-        macro_rules! degrees_x {
-            ($ty:ty) => {{
-                li!($ty, |value: $ty, css: &str| {
-                    let (x, y, z) = value.into_components();
-                    let x = (x.into_degrees() + 360.0).rem_euclid(360.0);
-                    format!("{css} ({x:>5.1}°, {y:.3}, {z:.3})")
-                })
-            }};
-        }
-
-        macro_rules! degrees_z {
-            ($ty:ty) => {{
-                li!($ty, |value: $ty, css: &str| {
-                    let (x, y, z) = value.into_components();
-                    let z = (z.into_degrees() + 360.0).rem_euclid(360.0);
-                    format!("{css} ({x:.3}°, {y:.3}, {z:>5.1})")
-                })
-            }};
-        }
-
-        macro_rules! linear {
-            ($ty:ty) => {{
-                li!($ty, |value: $ty, css: &str| {
-                    let (x, y, z) = value.into_components();
-                    format!("{css} ({x:.3}, {y:.3}, {z:.3})")
-                })
-            }};
-        }
+        let steps = steps.get();
+        let factor = 1.0 / (steps - 1).max(1) as f32;
 
         let items = [
             (
                 "rgb",
-                "https://docs.rs/palette/^0.7.4/palette/type.Srgb.html",
-                &mut linear!(Srgb) as &mut dyn Iterator<Item = Html>,
+                "https://docs.rs/palette/0.7.6/palette/type.Srgb.html",
+                &mut colors::<Srgb>(start, end, factor, steps) as &mut dyn Iterator<Item = Html>,
             ),
             (
                 "lin. srgb",
-                "https://docs.rs/palette/^0.7.4/palette/type.LinSrgb.html",
-                &mut linear!(LinSrgb) as _,
+                "https://docs.rs/palette/0.7.6/palette/type.LinSrgb.html",
+                &mut colors::<LinSrgb>(start, end, factor, steps) as _,
             ),
             (
                 "hsl",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Hsl.html",
-                &mut degrees_x!(Hsl) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Hsl.html",
+                &mut colors::<Hsl>(start, end, factor, steps) as _,
             ),
             (
                 "okhsl",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Okhsl.html",
-                &mut degrees_x!(Okhsl) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Okhsl.html",
+                &mut colors::<Okhsl>(start, end, factor, steps) as _,
             ),
             (
                 "hsluv",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Hsluv.html",
-                &mut degrees_x!(Hsluv) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Hsluv.html",
+                &mut colors::<Hsluv>(start, end, factor, steps) as _,
             ),
             (
                 "hsv",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Hsv.html",
-                &mut degrees_x!(Hsv) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Hsv.html",
+                &mut colors::<Hsv>(start, end, factor, steps) as _,
             ),
             (
                 "okhsv",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Okhsv.html",
-                &mut degrees_x!(Okhsv) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Okhsv.html",
+                &mut colors::<Okhsv>(start, end, factor, steps) as _,
             ),
             (
                 "hwb",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Hwb.html",
-                &mut degrees_x!(Hwb) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Hwb.html",
+                &mut colors::<Hwb>(start, end, factor, steps) as _,
             ),
             (
                 "okhwb",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Okhwb.html",
-                &mut degrees_x!(Okhwb) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Okhwb.html",
+                &mut colors::<Okhwb>(start, end, factor, steps) as _,
             ),
             (
                 "lab",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Lab.html",
-                &mut linear!(Lab) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Lab.html",
+                &mut colors::<Lab>(start, end, factor, steps) as _,
             ),
             (
                 "oklab",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Oklab.html",
-                &mut linear!(Oklab) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Oklab.html",
+                &mut colors::<Oklab>(start, end, factor, steps) as _,
             ),
             (
                 "lch",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Lch.html",
-                &mut degrees_z!(Lch) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Lch.html",
+                &mut colors::<Lch>(start, end, factor, steps) as _,
             ),
             (
                 "oklch",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Oklch.html",
-                &mut degrees_z!(Oklch) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Oklch.html",
+                &mut colors::<Oklch>(start, end, factor, steps) as _,
             ),
             (
                 "lchuv",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Lchuv.html",
-                &mut degrees_z!(Lchuv) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Lchuv.html",
+                &mut colors::<Lchuv>(start, end, factor, steps) as _,
             ),
             (
                 "luv",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Luv.html",
-                &mut linear!(Luv) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Luv.html",
+                &mut colors::<Luv>(start, end, factor, steps) as _,
             ),
             (
                 "xyz",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Xyz.html",
-                &mut linear!(Xyz) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Xyz.html",
+                &mut colors::<Xyz>(start, end, factor, steps) as _,
             ),
             (
                 "yxy",
-                "https://docs.rs/palette/^0.7.4/palette/struct.Yxy.html",
-                &mut linear!(Yxy) as _,
+                "https://docs.rs/palette/0.7.6/palette/struct.Yxy.html",
+                &mut colors::<Yxy>(start, end, factor, steps) as _,
+            ),
+            (
+                "Cam16Jch",
+                "https://docs.rs/palette/0.7.6/palette/cam16/struct.Cam16Jch.html",
+                &mut colors_cam16::<Cam16Jch<f32>>(start, end, factor, steps) as _,
+            ),
+            (
+                "Cam16Jmh",
+                "https://docs.rs/palette/0.7.6/palette/cam16/struct.Cam16Jmh.html",
+                &mut colors_cam16::<Cam16Jmh<f32>>(start, end, factor, steps) as _,
+            ),
+            (
+                "Cam16Jsh",
+                "https://docs.rs/palette/0.7.6/palette/cam16/struct.Cam16Jsh.html",
+                &mut colors_cam16::<Cam16Jsh<f32>>(start, end, factor, steps) as _,
+            ),
+            (
+                "Cam16Qch",
+                "https://docs.rs/palette/0.7.6/palette/cam16/struct.Cam16Qch.html",
+                &mut colors_cam16::<Cam16Qch<f32>>(start, end, factor, steps) as _,
+            ),
+            (
+                "Cam16Qmh",
+                "https://docs.rs/palette/0.7.6/palette/cam16/struct.Cam16Qmh.html",
+                &mut colors_cam16::<Cam16Qmh<f32>>(start, end, factor, steps) as _,
+            ),
+            (
+                "Cam16Qsh",
+                "https://docs.rs/palette/0.7.6/palette/cam16/struct.Cam16Qsh.html",
+                &mut colors_cam16::<Cam16Qsh<f32>>(start, end, factor, steps) as _,
             ),
         ];
 
@@ -334,6 +299,68 @@ fn App() -> Html {
             </p>
             <>{mix}</>
         </div>
+    }
+}
+
+fn colors<T>(start: Srgb, end: Srgb, factor: f32, steps: u8) -> impl Iterator<Item = Html>
+where
+    Srgb: IntoColor<T>,
+    T: IntoColor<Srgb> + Mix<Scalar = f32> + Copy,
+{
+    let start: T = start.into_color();
+    let end: T = end.into_color();
+    (0..steps).map(move |idx| color_row(start.mix(end, factor * idx as f32).into_color()))
+}
+
+fn colors_cam16<T>(start: Srgb, end: Srgb, factor: f32, steps: u8) -> impl Iterator<Item = Html>
+where
+    T: Mix<Scalar = f32>
+        + Cam16FromUnclamped<StaticWp<D65>, Xyz, Scalar = f32>
+        + Cam16IntoUnclamped<StaticWp<D65>, Xyz, Scalar = f32>
+        + Copy,
+{
+    let parameters = Parameters::default_static_wp(40.0).bake();
+    let start = T::cam16_from_unclamped(start.into_color(), parameters);
+    let end = T::cam16_from_unclamped(end.into_color(), parameters);
+    (0..steps).map(move |idx| {
+        color_row(
+            start
+                .mix(end, factor * idx as f32)
+                .cam16_into_unclamped(parameters)
+                .into_color(),
+        )
+    })
+}
+
+fn color_row(value: Srgb) -> Html {
+    let text_color = TEXT_COLORS
+        .iter()
+        .copied()
+        .max_by_key(|c| FloatOrd(c.relative_contrast(value)))
+        .unwrap_or_default();
+    let text_color = Srgb::from_color(text_color);
+    let text_color: Srgb<u8> = text_color.into_format();
+    let (tr, tg, tb) = text_color.into_components();
+
+    let background: Srgb<u8> = value.into_format();
+    let (br, bg, bb) = background.into_components();
+    let css = format!("#{br:02x}{bg:02x}{bb:02x}");
+
+    let style = format!(
+        "\
+        background-color: {css};\
+        color: #{tr:02x}{tg:02x}{tb:02x};\
+        display: inline-block;\
+        height: 1.2lh;\
+        width: 8em;\
+        text-align: center;\
+        font-weight: bold;"
+    );
+
+    html! {
+        <li>
+            <span {style}><tt>{css}</tt></span>
+        </li>
     }
 }
 

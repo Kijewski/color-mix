@@ -33,7 +33,7 @@ jobs:
       - name: Install trunk
         uses: taiki-e/install-action@v2
         with:
-          tool: trunk@0.18.8
+          tool: trunk@0.21.14
 
       - name: Compile project
         run: trunk build --release
